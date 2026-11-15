@@ -15,7 +15,7 @@ def parse_args():
     parser.add_argument("--repo", required=True, help="URL репозитория или путь к файлу тестового репозитория")
     parser.add_argument("--mode", choices=["real", "test"], default="real",
                         help="режим работы: real - реальный репозиторий, test - тестовый файл (по умолчанию real)")
-    parser.add_argument("--version", required=True, help="версия пакета, например 2.31.0")
+    parser.add_argument("--version", default="latest", help="версия пакета, например 2.31.0 (по умолчанию latest)")
     parser.add_argument("--max-depth", default="3", help="максимальная глубина анализа (целое число >= 1, по умолчанию 3)")
     parser.add_argument("--filter", default="", help="подстрока для фильтрации пакетов")
     return parser.parse_args()
@@ -24,18 +24,18 @@ def parse_args():
 def validate(args):
     errors = []
 
-    if not re.fullmatch(r"[A-Za-z0-9]([A-Za-z0-9._-]*[A-Za-z0-9])?", args.package):
-        errors.append(f"--package: некорректное имя пакета '{args.package}'")
-
     if args.mode == "test":
+        if not re.fullmatch(r"[A-Z]+", args.package):
+            errors.append(f"--package: в тестовом режиме имя пакета задается большими латинскими буквами ('{args.package}')")
         if not os.path.isfile(args.repo):
             errors.append(f"--repo: файл тестового репозитория '{args.repo}' не найден")
     else:
+        if not re.fullmatch(r"[A-Za-z0-9]([A-Za-z0-9._-]*[A-Za-z0-9])?", args.package):
+            errors.append(f"--package: некорректное имя пакета '{args.package}'")
         if not re.match(r"^https?://\S+$", args.repo):
             errors.append(f"--repo: '{args.repo}' не похоже на URL (ожидается http:// или https://)")
-
-    if not re.fullmatch(r"\d+(\.\d+)*([abc]|rc|\.post|\.dev)?\d*", args.version):
-        errors.append(f"--version: некорректная версия '{args.version}' (пример: 1.2.3)")
+        if args.version != "latest" and not re.fullmatch(r"\d+(\.\d+)*([abc]|rc|\.post|\.dev)?\d*", args.version):
+            errors.append(f"--version: некорректная версия '{args.version}' (пример: 1.2.3)")
 
     try:
         depth = int(args.max_depth)
@@ -78,10 +78,94 @@ def parse_requirements(requires_dist):
     return result
 
 
-def get_direct_dependencies(repo, package, version):
-    url = f"{repo.rstrip('/')}/{package}/{version}/json"
+def get_direct_dependencies_real(repo, package, version=None):
+    base = repo.rstrip("/")
+    if base.endswith("/pypi"):
+        base = base[:-5]
+    if version and version != "latest":
+        url = f"{base}/pypi/{package}/{version}/json"
+    else:
+        url = f"{base}/pypi/{package}/json"
     data = get_json(url)
     return parse_requirements(data["info"].get("requires_dist"))
+
+
+def load_test_repo(path):
+    graph = {}
+    with open(path, "r", encoding="utf-8") as f:
+        for raw_line in f:
+            line = raw_line.strip()
+            if not line or line.startswith("#"):
+                continue
+            if ":" in line:
+                pkg, deps_str = line.split(":", 1)
+                pkg = pkg.strip()
+                deps = [d.strip() for d in deps_str.split() if d.strip()]
+            else:
+                parts = line.split()
+                pkg = parts[0]
+                deps = parts[1:]
+            graph[pkg] = deps
+            for d in deps:
+                if d not in graph:
+                    graph[d] = []
+    return graph
+
+
+def build_graph_dfs_iterative(root_pkg, max_depth, filter_substr, get_deps_fn):
+    graph = {}
+    cycles = []
+    visited = set()
+
+    if filter_substr and filter_substr in root_pkg:
+        return graph, cycles
+
+    # Стек хранит кортежи: (пакет, глубина, множество_предков_в_текущем_пути)
+    stack = [(root_pkg, 0, {root_pkg})]
+
+    while stack:
+        pkg, depth, path_set = stack.pop()
+
+        if pkg not in graph:
+            graph[pkg] = []
+
+        if depth >= max_depth:
+            continue
+
+        if pkg in visited:
+            continue
+        visited.add(pkg)
+
+        deps = get_deps_fn(pkg)
+        filtered_deps = []
+        for dep in deps:
+            if filter_substr and filter_substr in dep:
+                continue
+            filtered_deps.append(dep)
+            if dep in path_set:
+                cycles.append((pkg, dep))
+            elif dep not in visited:
+                stack.append((dep, depth + 1, path_set | {dep}))
+
+        graph[pkg] = filtered_deps
+        for dep in filtered_deps:
+            if dep not in graph:
+                graph[dep] = []
+
+    return graph, cycles
+
+
+def print_graph(graph, cycles):
+    print("Граф зависимостей:")
+    for pkg, deps in graph.items():
+        if deps:
+            print(f"  {pkg} -> {', '.join(deps)}")
+        else:
+            print(f"  {pkg} -> (нет зависимостей)")
+    if cycles:
+        print("\nОбнаружены циклические зависимости:")
+        for src, dst in cycles:
+            print(f"  цикл на ребре: {src} -> {dst}")
 
 
 def main():
@@ -93,23 +177,28 @@ def main():
             print(f"Ошибка: {e}", file=sys.stderr)
         sys.exit(1)
 
-    if args.mode == "test":
-        print("Ошибка: режим test будет реализован на следующих этапах", file=sys.stderr)
-        sys.exit(1)
+    max_depth = int(args.max_depth)
 
-    package = normalize(args.package)
+    if args.mode == "test":
+        test_graph = load_test_repo(args.repo)
+        if args.package not in test_graph:
+            print(f"Ошибка: пакет '{args.package}' не найден в тестовом репозитории", file=sys.stderr)
+            sys.exit(1)
+        get_deps = lambda p: test_graph.get(p, [])
+        root_pkg = args.package
+    else:
+        root_pkg = normalize(args.package)
+        def get_deps(p):
+            ver = args.version if p == root_pkg else "latest"
+            return get_direct_dependencies_real(args.repo, p, ver)
+
     try:
-        deps = get_direct_dependencies(args.repo, package, args.version)
+        graph, cycles = build_graph_dfs_iterative(root_pkg, max_depth, args.filter, get_deps)
     except ValueError as e:
         print(f"Ошибка: {e}", file=sys.stderr)
         sys.exit(1)
 
-    print(f"Прямые зависимости {package} {args.version}:")
-    if deps:
-        for d in deps:
-            print(f"  - {d}")
-    else:
-        print("  (нет зависимостей)")
+    print_graph(graph, cycles)
 
 
 if __name__ == "__main__":
