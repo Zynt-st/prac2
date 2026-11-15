@@ -18,6 +18,8 @@ def parse_args():
     parser.add_argument("--version", default="latest", help="версия пакета, например 2.31.0 (по умолчанию latest)")
     parser.add_argument("--max-depth", default="3", help="максимальная глубина анализа (целое число >= 1, по умолчанию 3)")
     parser.add_argument("--filter", default="", help="подстрока для фильтрации пакетов")
+    parser.add_argument("--reverse", action="store_true",
+                        help="вывести обратные зависимости (пакеты, которые зависят от заданного)")
     return parser.parse_args()
 
 
@@ -112,6 +114,17 @@ def load_test_repo(path):
     return graph
 
 
+def invert_graph(graph):
+    rev = {pkg: [] for pkg in graph}
+    for pkg, deps in graph.items():
+        for dep in deps:
+            if dep not in rev:
+                rev[dep] = []
+            if pkg not in rev[dep]:
+                rev[dep].append(pkg)
+    return rev
+
+
 def build_graph_dfs_iterative(root_pkg, max_depth, filter_substr, get_deps_fn):
     graph = {}
     cycles = []
@@ -120,7 +133,6 @@ def build_graph_dfs_iterative(root_pkg, max_depth, filter_substr, get_deps_fn):
     if filter_substr and filter_substr in root_pkg:
         return graph, cycles
 
-    # Стек хранит кортежи: (пакет, глубина, множество_предков_в_текущем_пути)
     stack = [(root_pkg, 0, {root_pkg})]
 
     while stack:
@@ -168,6 +180,16 @@ def print_graph(graph, cycles):
             print(f"  цикл на ребре: {src} -> {dst}")
 
 
+def print_reverse_dependencies(target_pkg, rev_subgraph):
+    dependents = [pkg for pkg in rev_subgraph if pkg != target_pkg]
+    print(f"Обратные зависимости для пакета {target_pkg}:")
+    if dependents:
+        for pkg in dependents:
+            print(f"  - {pkg}")
+    else:
+        print("  (нет пакетов, зависящих от данного)")
+
+
 def main():
     args = parse_args()
     errors = validate(args)
@@ -184,6 +206,15 @@ def main():
         if args.package not in test_graph:
             print(f"Ошибка: пакет '{args.package}' не найден в тестовом репозитории", file=sys.stderr)
             sys.exit(1)
+
+        if args.reverse:
+            rev_full = invert_graph(test_graph)
+            rev_subgraph, _ = build_graph_dfs_iterative(
+                args.package, max_depth, args.filter, lambda p: rev_full.get(p, [])
+            )
+            print_reverse_dependencies(args.package, rev_subgraph)
+            return
+
         get_deps = lambda p: test_graph.get(p, [])
         root_pkg = args.package
     else:
@@ -198,7 +229,14 @@ def main():
         print(f"Ошибка: {e}", file=sys.stderr)
         sys.exit(1)
 
-    print_graph(graph, cycles)
+    if args.reverse:
+        rev_full = invert_graph(graph)
+        rev_subgraph, _ = build_graph_dfs_iterative(
+            root_pkg, max_depth, args.filter, lambda p: rev_full.get(p, [])
+        )
+        print_reverse_dependencies(root_pkg, rev_subgraph)
+    else:
+        print_graph(graph, cycles)
 
 
 if __name__ == "__main__":
