@@ -1,99 +1,82 @@
-# prac2 — Визуализация графа зависимостей пакетов (Вариант 6, Этапы 1–5)
+# prac2 - визуализация графа зависимостей (Вариант 6)
 
-CLI-инструмент для анализа и визуализации графа зависимостей пакетов Python (`pip`) без использования сторонних библиотек и менеджеров пакетов.
+CLI-инструмент для анализа и визуализации графа зависимостей пакетов
+Python (pip) без менеджеров пакетов и сторонних библиотек.
 
-## Параметры командной строки (Этап 1)
+## Структура проекта
+
+```text
+prac2/
+├── src/
+│   └── dep_graph.py        # исходный код
+├── tests/
+│   ├── data/
+│   │   ├── test_repo.txt   # тестовый репозиторий (A..F)
+│   │   └── test_cycle.txt  # тестовый репозиторий с циклами
+│   └── test_dep_graph.py   # модульные тесты (unittest)
+├── run.bat                 # скрипт запуска (Windows)
+├── run.sh                  # скрипт запуска (Linux/macOS)
+├── README.md
+└── .gitignore
+```
+
+## Параметры командной строки
 
 | Параметр | Описание |
 | --- | --- |
-| `--package` | Имя анализируемого пакета (обязательный) |
-| `--repo` | URL репозитория (`https://pypi.org`) или путь к файлу тестового репозитория |
-| `--mode` | Режим работы: `real` (по умолчанию) или `test` |
-| `--version` | Версия пакета, например `2.31.0` (по умолчанию `latest`) |
-| `--max-depth` | Максимальная глубина анализа, целое число `>= 1` (по умолчанию `3`) |
-| `--filter` | Подстрока для исключения пакетов из анализа |
-| `--reverse` | Режим вывода обратных зависимостей (Этап 4) |
-| `--d2` | Вывод описания графа на языке диаграмм D2 (Этап 5) |
+| `--package` | имя анализируемого пакета (обязательный) |
+| `--repo` | URL репозитория или путь к файлу тестового репозитория |
+| `--mode` | режим работы: `real` (по умолчанию) или `test` |
+| `--version` | версия пакета (по умолчанию `latest`) |
+| `--max-depth` | максимальная глубина анализа, >= 1 (по умолчанию 3) |
+| `--filter` | подстрока для исключения пакетов |
+| `--reverse` | вывести обратные зависимости |
+| `--d2` | вывести граф на языке диаграмм D2 |
 
----
+## Запуск
 
-## Примеры запуска по этапам
-
-### Этап 2. Прямые зависимости пакета из PyPI
 ```bash
-python dep_graph.py --package requests --version 2.31.0 --repo https://pypi.org --max-depth 1
+run.bat --package requests --repo https://pypi.org --version 2.31.0
+./run.sh --package requests --repo https://pypi.org --version 2.31.0
 ```
 
-### Этап 3. Построение графа (DFS без рекурсии), фильтрация, циклы и тестовый режим
-1. **Обычный обход тестового репозитория (`test_repo.txt`):**
-   ```bash
-   python dep_graph.py --package A --repo test_repo.txt --mode test --max-depth 3
-   ```
-2. **Фильтрация пакетов, содержащих подстроку `E`:**
-   ```bash
-   python dep_graph.py --package A --repo test_repo.txt --mode test --max-depth 3 --filter E
-   ```
-3. **Обнаружение циклических зависимостей (`test_cycle.txt`):**
-   ```bash
-   python dep_graph.py --package A --repo test_cycle.txt --mode test --max-depth 4
-   ```
+## Тесты
 
-### Этап 4. Обратные зависимости (`--reverse`)
-Поиск пакетов, которые зависят от заданного пакета `F` (использует тот же итеративный алгоритм DFS по транспонированному графу):
 ```bash
-python dep_graph.py --package F --repo test_repo.txt --mode test --max-depth 3 --reverse
+run.bat test
+./run.sh test
 ```
 
-### Этап 5. Визуализация на языке диаграмм D2 (`--d2`)
+## Примеры по этапам
 
-#### Примеры D2 для 3 различных пакетов:
+```bash
+# Этап 1: обработка ошибок
+run.bat --package "bad name!" --repo not_url --version abc --max-depth 0
 
-1. **Пакет `requests` (2.31.0):**
-   ```bash
-   python dep_graph.py --package requests --version 2.31.0 --repo https://pypi.org --max-depth 2 --d2
-   ```
-   Вывод D2:
-   ```d2
-   direction: down
-   "requests" -> "charset-normalizer"
-   "requests" -> "idna"
-   "requests" -> "urllib3"
-   "requests" -> "certifi"
-   ```
+# Этап 2: прямые зависимости
+run.bat --package requests --repo https://pypi.org --version 2.31.0 --max-depth 1
 
-2. **Пакет `flask` (3.0.0):**
-   ```bash
-   python dep_graph.py --package flask --version 3.0.0 --repo https://pypi.org --max-depth 2 --d2
-   ```
-   Вывод D2:
-   ```d2
-   direction: down
-   "flask" -> "werkzeug"
-   "flask" -> "jinja2"
-   "flask" -> "itsdangerous"
-   "flask" -> "click"
-   "flask" -> "blinker"
-   "jinja2" -> "markupsafe"
-   "click" -> "colorama"
-   "werkzeug" -> "markupsafe"
-   ```
+# Этап 3: граф, глубина, фильтр, циклы
+run.bat --package A --repo tests/data/test_repo.txt --mode test
+run.bat --package A --repo tests/data/test_repo.txt --mode test --filter E
+run.bat --package A --repo tests/data/test_cycle.txt --mode test --max-depth 4
 
-3. **Пакет `pytest` (8.0.0):**
-   ```bash
-   python dep_graph.py --package pytest --version 8.0.0 --repo https://pypi.org --max-depth 2 --d2
-   ```
-   Вывод D2:
-   ```d2
-   direction: down
-   "pytest" -> "iniconfig"
-   "pytest" -> "packaging"
-   "pytest" -> "pluggy"
-   "pytest" -> "exceptiongroup"
-   "pytest" -> "tomli"
-   "pytest" -> "colorama"
-   ```
+# Этап 4: обратные зависимости
+run.bat --package F --repo tests/data/test_repo.txt --mode test --reverse
 
-#### Сравнение со штатными инструментами (`pipdeptree` / `pip show`)
-При сравнении вывода `dep_graph.py` с утилитой `pipdeptree` (которая анализирует уже установленное локальное окружение Python) могут наблюдаться небольшие расхождения:
-1. **Маркеры окружения (PEP 508):** в метаданных PyPI (`requires_dist`) указаны условные зависимости для всех ОС и версий Python (например, `colorama ; sys_platform == "win32"` или `tomli ; python_version < "3.11"`). Наш инструмент извлекает полный перечень базовых зависимостей из метаданных пакета в репозитории, тогда как `pipdeptree` показывает только пакеты, реально установленные на конкретной ОС и версии интерпретатора.
-2. **Разрешение версий транзитивных зависимостей:** для транзитивных пакетов анализируется актуальный релиз (`latest`) из репозитория PyPI, в то время как в локальном виртуальном окружении может быть зафиксирована более старая версия пакета.
+# Этап 5: D2 для трёх пакетов
+run.bat --package requests --repo https://pypi.org --version 2.31.0 --d2
+run.bat --package flask --repo https://pypi.org --version 3.0.0 --d2
+run.bat --package pytest --repo https://pypi.org --version 8.0.0 --d2
+```
+
+## Сравнение со штатными инструментами
+
+Результат можно сравнить с `pipdeptree` или `pip show`. Расхождения
+возникают по двум причинам:
+
+1. Маркеры окружения (PEP 508). В метаданных PyPI указаны зависимости
+   для всех платформ (например, `colorama; sys_platform == "win32"`),
+   а `pipdeptree` показывает только то, что реально установлено.
+2. Версии транзитивных пакетов. Инструмент берёт последний релиз из
+   PyPI, а в локальном окружении может стоять более старая версия.
